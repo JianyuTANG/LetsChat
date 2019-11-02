@@ -18,27 +18,27 @@ includelib msvcrt.lib
 ;addFriend PROTO :PTR BYTE
 
 .data
-hInstance dd ?  ; 存放应用程序的句柄
-hWinMain dd ?   ; 存放窗口的句柄
+hInstance dd ?
+hWinMain dd ?
 hFont dd ?
 hBrush dd ?
-hListView dd ?  ; 存放ListView的句柄
+hListView dd ?
 hUsernameEdit dd ? 
 hPasswordEdit dd ? 
-hEdit dd ?		; 存放输入框的句柄
-hNewEdit dd ?	; 新用户输入框的句柄
-ptrCurUser dd 0	; 存放当前User的指针
+hSendButton dd ?
+hEdit dd ?
+hNewEdit dd ?
+ptrCurUser dd 0
 ptrUsers dd 0
 
 strUsername db 128 DUP(0)
 strPassword db 128 DUP(0)
 
-
-
 USER STRUCT
 	ID dd 0
 	username dd 0
 	status dd 0
+	row dd 0
 	hEdit dd 0
 	pNext dd 0
 USER ENDS
@@ -60,6 +60,7 @@ szClient db 'Client', 0
 WC_LISTVIEW db 'SysListView32', 0
 RICHEDIT50W db 'RICHEDIT50W', 0
 szID db 'ID', 0
+szStatus db 'Status', 0
 szHello db 'Hello, ', 0
 szSend db 'Send', 0
 newLine db 0Dh,0Ah,0
@@ -70,6 +71,8 @@ szAddfriend db 'Add friend ', 0
 szSuccess db ' success!', 0
 szFailed db ' failed!', 0
 szShell32 db 'shell32.dll', 0
+szOnline db 'Online', 0
+szOffline db 'Offline', 0
 
 .code
 login PROC username:ptr byte, password:ptr byte
@@ -81,6 +84,11 @@ sign_in PROC username:ptr byte, password:ptr byte
 	mov eax, 1
 	ret
 sign_in ENDP
+
+getFriendList PROC
+	mov eax, 1
+	ret
+getFriendList ENDP
 
 addFriend PROC username:ptr byte
 	mov eax, 1
@@ -118,27 +126,33 @@ CreateListView PROC USES eax esi edi
 
 	invoke CreateWindowEx, NULL, offset WC_LISTVIEW, \
 	NULL, WS_CHILD or WS_VISIBLE or LVS_REPORT or LVS_EDITLABELS or LVS_SINGLESEL, \
-	0, 70, 320,	200, hWinMain, 0, hInstance, NULL
+	10, 70, 300, 510, hWinMain, 0, hInstance, NULL
 	mov hListView, eax
 	invoke SendMessage, hListView, LVM_SETIMAGELIST, @hImageList, LVSIL_SMALL
+
 	mov @col.imask, LVCF_TEXT or LVCF_WIDTH or LVCF_SUBITEM
-	mov @col.lx, 0
+	mov @col.lx, 220
 	mov @col.iSubItem, 0
-	mov @col.pszText, offset szID
+	mov @col.pszText, offset szUsername
 	invoke SendMessage, hListView, LVM_INSERTCOLUMN, 0,addr @col
 	invoke SendMessage, hListView, LVM_SETEXTENDEDLISTVIEWSTYLE, 0, LVS_EX_FULLROWSELECT or LVS_EX_AUTOSIZECOLUMNS
 
 	mov @col.imask, LVCF_TEXT or LVCF_WIDTH or LVCF_SUBITEM
-	mov @col.lx, 280
+	mov @col.lx, 80
 	mov @col.iSubItem, 0
-	mov @col.pszText, offset szUsername
+	mov @col.pszText, offset szStatus
 	invoke SendMessage, hListView, LVM_INSERTCOLUMN, 1, addr @col
+
+	mov @col.imask, LVCF_TEXT or LVCF_WIDTH or LVCF_SUBITEM
+	mov @col.lx, 0
+	mov @col.iSubItem, 0
+	mov @col.pszText, offset szID
+	invoke SendMessage, hListView, LVM_INSERTCOLUMN, 2, addr @col
+
 	ret
 CreateListView ENDP
 
 InitUI PROC USES eax
-	invoke CreateListView
-
 	invoke CreateWindowEx, NULL, addr szEdit, addr szText,\
 	WS_CHILD or WS_VISIBLE or WS_BORDER or WS_VSCROLL or ES_LEFT or ES_MULTILINE or ES_AUTOVSCROLL, 340, 450, 430, 130,\  
 	hWinMain, 0, hInstance, NULL
@@ -148,7 +162,9 @@ InitUI PROC USES eax
 	invoke CreateWindowEx, NULL, addr szButton, addr szSend,\
 	WS_TABSTOP or WS_VISIBLE or WS_CHILD or BS_DEFPUSHBUTTON, 780, 450, 140, 130,
 	hWinMain, 1, hInstance, NULL
-	invoke SendMessage, eax, WM_SETFONT, hFont, 0
+	mov hSendButton, eax
+	invoke EnableWindow, hSendButton, 0
+	invoke SendMessage, hSendButton, WM_SETFONT, hFont, 0
 
 	invoke CreateWindowEx, NULL, addr szEdit, \
 	NULL, WS_CHILD or WS_VISIBLE or WS_BORDER, 10, 40, 240, 20, \
@@ -161,15 +177,22 @@ InitUI PROC USES eax
 	hWinMain, 2, hInstance, NULL
 	invoke SendMessage, eax, WM_SETFONT, hFont, 0
 
+	invoke CreateListView
+
+	mov eax, 0
+	.while eax == 0
+		invoke getFriendList
+	.endw
 	ret
 InitUI ENDP
 
-AppendMsg PROC USES eax edx esi, ID:DWORD, msg:DWORD, from:BYTE
+AppendMsg PROC USES eax edx esi, username:DWORD, msg:DWORD, from:BYTE
 	local @hEdit:DWORD
 	mov esi, ptrUsers
 	.while esi != 0
-		mov edi, (USER ptr [esi]).ID
-		.if edi == ID
+		mov edi, (USER ptr [esi]).username
+		invoke crt_strcmp, edi, username
+		.if eax == 0
 			.break
 		.endif
 		mov esi, (USER ptr [esi]).pNext
@@ -190,33 +213,22 @@ AppendMsg PROC USES eax edx esi, ID:DWORD, msg:DWORD, from:BYTE
 	ret
 AppendMsg ENDP
 
-SendMsg PROC USES eax edx
-	local @msg[512]:BYTE
-	invoke SendMessage, hEdit, WM_GETTEXT, 512, addr @msg
-	invoke SendMessage, hEdit, WM_SETTEXT, 0, 0
-	mov edx, ptrCurUser
-	invoke AppendMsg, (USER ptr [edx]).ID, addr @msg, 1
-	invoke AppendMsg, (USER ptr [edx]).ID, addr @msg, 0
-	ret
-SendMsg ENDP
-
-SelectSession PROC USES eax edx esi edi, row:DWORD
+SwitchSession PROC USES eax edx esi edi, row:DWORD
 	local @item:LV_ITEM
-	local @buffer[16]: DWORD
-	local @ID: DWORD
+	local @buffer[128]: DWORD
 
 	mov @item.iSubItem, 0
 	lea eax, @buffer
 	mov @item.pszText, eax
-	mov @item.cchTextMax, 16
-	invoke SendMessage, hListView, LVM_GETITEMTEXT , row, addr @item
-	invoke crt_atoi, addr @buffer
-	mov @ID, eax
+	mov @item.cchTextMax, 128
+	invoke SendMessage, hListView, LVM_GETITEMTEXT, row, addr @item
 
 	mov esi, ptrUsers
 	.while esi != 0
-		mov edi, (USER ptr [esi]).ID
-		.if edi == @ID
+		mov edi, (USER ptr [esi]).username
+		lea eax, @buffer
+		invoke crt_strcmp, edi, eax
+		.if eax == 0
 			.break
 		.endif
 		mov esi, (USER ptr [esi]).pNext
@@ -228,28 +240,59 @@ SelectSession PROC USES eax edx esi edi, row:DWORD
 		.endif
 		mov ptrCurUser, esi
 		invoke ShowWindow, (USER ptr [esi]).hEdit, SW_SHOW
+		mov eax, (USER ptr [esi]).status
+		.if eax == 0
+			invoke EnableWindow, hSendButton, 0
+		.else
+			invoke EnableWindow, hSendButton, 1
+		.endif
 	.endif
 	ret
-SelectSession ENDP
+SwitchSession ENDP
 
-AppendUser PROC USES eax ebx edx, ID:DWORD, Username:DWORD
+SendMsg PROC USES eax edx
+	local @msg[512]:BYTE
+	invoke SendMessage, hEdit, WM_GETTEXT, 512, addr @msg
+	invoke SendMessage, hEdit, WM_SETTEXT, 0, 0
+	mov edx, ptrCurUser
+	invoke AppendMsg, (USER ptr [edx]).username, addr @msg, 1
+	;invoke AppendMsg, (USER ptr [edx]).username, addr @msg, 0
+	;invoke ChangeFriendStatus, (USER ptr [edx]).username, 0
+	ret
+SendMsg ENDP
+
+AppendFriend PROC USES eax ebx edx esi, username:DWORD, status:DWORD, ID:DWORD
 	local @item: LVITEM
 	local @hEdit: DWORD
-	local @szID[16]: DWORD
+	local @szID[16]: BYTE
 	mov @item.imask, LVIF_TEXT or LVIF_IMAGE
 	mov @item.iImage, 0
 	mov @item.pszText, NULL
 	mov @item.cchTextMax, 1024
 	invoke SendMessage, hListView, LVM_GETITEMCOUNT, 0, 0
 	mov @item.iItem, eax
+	mov esi, eax
 	mov @item.iSubItem, 0
 	invoke SendMessage, hListView, LVM_INSERTITEM, 0, addr @item
-	lea eax, @szID
-	invoke crt__itoa, ID, eax, 10
+
+	mov eax, username
 	mov @item.pszText, eax
 	invoke SendMessage, hListView, LVM_SETITEM, 0, addr @item
+
 	inc @item.iSubItem
-	mov eax, Username
+
+	.if status == 1
+		mov eax, offset szOnline
+	.else
+		mov eax, offset szOffline
+	.endif
+	mov @item.pszText, eax
+	invoke SendMessage, hListView, LVM_SETITEM, 0, addr @item
+
+	inc @item.iSubItem
+
+	lea eax, @szID
+	invoke crt__itoa, ID, eax, 10
 	mov @item.pszText, eax
 	invoke SendMessage, hListView, LVM_SETITEM, 0, addr @item
 
@@ -267,8 +310,11 @@ AppendUser PROC USES eax ebx edx, ID:DWORD, Username:DWORD
 	mov ebx, eax
 	mov eax, ID
 	mov (USER ptr [ebx]).ID, eax
-	mov eax, Username
+	mov eax, username
 	mov (USER ptr [ebx]).username, eax
+	mov eax, status
+	mov (USER ptr [ebx]).status, eax
+	mov (USER ptr [ebx]).row, esi
 	mov eax, @hEdit
 	mov (USER ptr [ebx]).hEdit, eax
 
@@ -285,7 +331,39 @@ AppendUser PROC USES eax ebx edx, ID:DWORD, Username:DWORD
 		mov (USER ptr [eax]).pNext, ebx
 	.endif
 	ret
-AppendUser ENDP
+AppendFriend ENDP
+
+ChangeFriendStatus PROC USES eax ebx edx, username:DWORD, status:DWORD
+	local @item: LVITEM
+	local @row: DWORD
+	mov esi, ptrUsers
+	.while esi != 0
+		mov edi, (USER ptr [esi]).username
+		invoke crt_strcmp, edi, username
+		.if eax == 0
+			.break
+		.endif
+		mov esi, (USER ptr [esi]).pNext
+	.endw
+	.if esi != 0
+		mov @item.imask, LVIF_TEXT
+		mov eax, (USER ptr [esi]).row
+		mov @item.iItem, eax
+		mov @item.iSubItem, 1
+		mov eax, status
+		mov (USER ptr [esi]).status, eax
+		.if status == 1
+			mov eax, offset szOnline
+		.else
+			mov eax, offset szOffline
+		.endif
+		mov @item.pszText, eax
+		mov @item.cchTextMax, 16
+		invoke SendMessage, hListView, LVM_SETITEM, 0, addr @item
+		invoke SwitchSession, (USER ptr [esi]).row
+	.endif
+	ret
+ChangeFriendStatus ENDP
 
 ClientProc PROC USES ebx esi edi, hWnd:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
 	local @stPs:PAINTSTRUCT
@@ -310,12 +388,8 @@ ClientProc PROC USES ebx esi edi, hWnd:DWORD, uMsg:DWORD, wParam:DWORD, lParam:D
 		mov eax, hWnd
 		mov hWinMain, eax
 
+		invoke CreateUserLabel, addr strUsername
 		invoke InitUI
-		invoke CreateUserLabel, addr WC_LISTVIEW
-		invoke AppendUser, 0, addr WC_LISTVIEW
-		invoke AppendUser, 3, addr szUsername
-		invoke AppendUser, 1, addr szUsername
-		invoke AppendUser, 2, addr szID
 
 	.elseif eax == WM_COMMAND  ;点击时候产生的消息是WM_COMMAND
 		mov eax, wParam  ;其中参数wParam里存的是句柄，如果点击了一个按钮，则wParam是那个按钮的句柄
@@ -339,7 +413,7 @@ ClientProc PROC USES ebx esi edi, hWnd:DWORD, uMsg:DWORD, wParam:DWORD, lParam:D
 		.if [esi].code == NM_DBLCLK 
 			assume esi:ptr NMITEMACTIVATE
 			mov edi, [esi].iItem
-			invoke SelectSession, edi
+			invoke SwitchSession, edi
 		.endif
 	.else
 		invoke DefWindowProc, hWnd, uMsg, wParam, lParam
@@ -473,12 +547,6 @@ LogProc PROC USES ebx esi edi, hWnd:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWOR
 				invoke MessageBox, hWinMain, addr szFailed, addr szText, MB_OK
 			.endif
 		.endif
-
-	;----------------------
-	;显然这这部分是自己添加的相应处理事件的代码，如添加某个按钮，点击该按钮会发生什么事等。
-	;还有其他的消息类型如WM_CREATE，代表窗口创建时，WM_COMMAND表示点击按钮时,在这里添加分支，编写相应的处理事件的代码
-	;----------------------
-
 	.else  ;否则按默认处理方法处理消息
 		invoke DefWindowProc, hWnd, uMsg, wParam, lParam
 		ret
