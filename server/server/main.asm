@@ -172,7 +172,7 @@ nameToFd ENDP
 msgParser PROC buffer:ptr byte, targetfd:ptr dword, content:ptr byte
 	mov eax, buffer
 	mov bl, [eax]
-	.if bl == 0
+	.if bl == 48
 		 ; 文字消息类型
 		 mov edx, eax
 		 add edx, 2
@@ -195,10 +195,10 @@ msgParser PROC buffer:ptr byte, targetfd:ptr dword, content:ptr byte
 		 .endw
 		 pop edx
 		 ; 将消息文本复制到内容缓冲区
-		 invoke stringCopy, content, edx
+		 invoke crt_strcpy, content, edx
 		 mov eax, 1
 		 ret
-	.elseif bl == 1
+	.elseif bl == 49
 		; 图片消息类型
 		mov edx, eax
 		 add edx, 2
@@ -221,14 +221,14 @@ msgParser PROC buffer:ptr byte, targetfd:ptr dword, content:ptr byte
 		 .endw
 		 pop edx
 		 ; 将图片内容（二进制）复制到内容缓冲区
-		 invoke stringCopy, content, edx
+		 invoke crt_strcpy, content, edx
 		 mov eax, 2
 		 ret
-	.elseif bl == 2
+	.elseif bl == 50
 		; 加好友
 		mov edx, eax
 		add edx, 2
-		invoke stringCopy, content, edx
+		invoke crt_strcpy, content, edx
 		mov eax, 3
 		ret
 	.endif
@@ -252,10 +252,18 @@ serviceThread PROC params:PTR threadParam
 	mov _hSocket, eax
 	mov eax, (threadParam PTR [esi]).clientid
 	mov _clientid, eax
-	invoke stringCopy, addr (clientlist[eax].username), addr @currentUsername
+	mov ebx, type client
+	mul ebx
+	add eax, offset clientlist
+	invoke crt_strcpy, addr @currentUsername, eax
 	pop esi
 	inc dwThreadCounter
 	print "enter thread", 13, 30
+	;----------------FOR DEBUG--------------
+	;invoke recv, _hSocket, addr @szBuffer, 512, 0
+	;invoke StdOut,addr @szBuffer
+	;invoke send, _hSocket, addr loginFailure, sizeof loginFailure, 0
+	;-----------------------------------------
 	; TODO 返回好友列表
 	invoke SetDlgItemInt,hWinMain,IDC_COUNT,dwThreadCounter,FALSE
 	.while  TRUE
@@ -275,15 +283,15 @@ serviceThread PROC params:PTR threadParam
 			.break  .if !eax
 			; 解析消息
 			invoke msgParser, addr @szBuffer, addr @targetSockfd, addr @msgContent
-			.if eax == 49
+			.if eax == 1
 				; 文字消息类型
 				invoke send, @targetSockfd, addr @msgContent, eax, 0
 				.break  .if eax == SOCKET_ERROR
-			.elseif eax == 50
+			.elseif eax == 2
 				; 图片消息类型
 				invoke send, @targetSockfd, addr @msgContent, eax, 0
 				.break  .if eax == SOCKET_ERROR
-			.elseif eax == 51
+			.elseif eax == 3
 				; 加好友
 				invoke ifLogged, addr @msgContent
 				.if eax == 1
@@ -383,8 +391,8 @@ login PROC sockfd:dword
 			mov eax, clientnum
 			mov ebx, type client
 			mul ebx
-			add eax, offset clientlist
 			push eax
+			add eax, offset clientlist
 			mov ebx, offset client.username
 			add eax, ebx
 			push eax
@@ -505,8 +513,9 @@ main PROC
 		; 判断请求是注册还是登录
 		invoke login, @connSock
 		.if eax == 1
-			mov @param_to_thread.sockid, eax
 			mov @param_to_thread.clientid, edx
+			mov eax, @connSock
+			mov @param_to_thread.sockid, eax
 			invoke CreateThread, NULL, 0, offset serviceThread, addr @param_to_thread, NULL, esp
 		.endif
         pop ecx
