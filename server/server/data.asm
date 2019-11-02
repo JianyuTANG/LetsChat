@@ -9,7 +9,7 @@ include masm32rt.inc
 relativePathHead byte "./userInfo/",0
 fileTail byte ".txt",0
 txtName byte 256 dup (0)
-
+my_tab byte " ",0
 
 
 .code
@@ -223,12 +223,12 @@ myloop:
 
 outyes:
     ; print结果会修改eax值
-	print "string equal!",13,10
+	;print "string equal!",13,10
 	mov eax,0
 	jmp outover
 
 outno:
-	print "string not equal!",13,10
+	;print "string not equal!",13,10
 	mov eax,1
 	jmp outover
 
@@ -281,7 +281,7 @@ myloop:
 	;inc eax
 	;inc eax
 	mov @cloc,eax
-	invoke StdOut,@word
+	;invoke StdOut,@word
 	; 比较是否一样
 	invoke Str_compare_my,@word,user2
 	cmp eax,0
@@ -371,7 +371,84 @@ initializeUserInfo  PROC
 initializeUserInfo  ENDP
 
 
+;---------------------------------------------------
+Str_merge PROC USES eax edx,firstPart:PTR BYTE,secondPart:PTR BYTE
+;字符串拼接
+;要求：目标串必须有足够空间容纳从源复制来的串。
+;---------------------------------------------------
 
+	invoke Str_length,firstPart
+	mov edx,firstPart
+	add edx,eax
+	invoke Str_copy,secondPart,edx
+    ret
+
+Str_merge ENDP
+
+
+;--------------------------------------------------------------
+readAllFriends PROC _username:PTR BYTE,_buffer:PTR BYTE
+;传入需要读取用户列表的用户名，传入存入用户列表信息的字符串指针
+; 形式如同： xxx xxx xxxx
+;把用户所有好友信息写入字符串指针地址
+;--------------------------------------------------------------
+
+    LOCAL @hFile :DWORD                          ; file handle          
+    LOCAL @bwrt  :DWORD                          ; variable for bytes written
+    LOCAL @flen  :DWORD                          ; file length variable
+    LOCAL @hMem  :DWORD                          ; allocated memory handle
+    LOCAL @cloc  :DWORD
+    LOCAL br   :DWORD
+    LOCAL @word:DWORD
+    invoke getUserFileName, _username
+    mov @hFile, fopen(addr txtName)        
+  ; -------------------------------------------------
+  ; open the file , read its content
+  ; -------------------------------------------------
+    mov @flen,fsize(@hFile)                     ; get its length
+    mov @hMem, alloc(@flen)                       ; allocate a buffer of that size
+    mov @word,alloc(20)
+    mov @cloc,0
+
+    ; 把文本内容读入内存中
+    mov @bwrt, fread(@hFile,@hMem,@flen)
+    ; 对文本内容进行一行行读取
+	invoke readline,@hMem,@word,0
+    ; Stdout结果也会修改eax的值
+	;invoke StdOut,@word
+	;inc eax
+	;inc eax
+	mov @cloc,eax
+
+	invoke readline,@hMem,@word,@cloc
+	; 判断是否结束： readline结束标志是eax为0
+	cmp eax,0
+	je outno
+	mov @cloc,eax
+    invoke Str_merge,_buffer,@word
+
+myloop:
+	invoke readline,@hMem,@word,@cloc
+	; 判断是否结束： readline结束标志是eax为0
+	cmp eax,0
+	je outno
+	mov @cloc,eax
+    invoke Str_merge,_buffer,addr my_tab
+    invoke Str_merge,_buffer,@word   
+	jmp myloop
+
+
+outno:
+    fclose @hFile
+    ; 释放内存
+    free @hMem                                   
+    free @word
+    invoke StdOut,_buffer
+	mov eax,0
+    
+    ret
+
+readAllFriends ENDP
 
 
 end

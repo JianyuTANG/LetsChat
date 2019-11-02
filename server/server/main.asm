@@ -27,6 +27,8 @@ ifLogged PROTO :PTR BYTE
 ifFriends PROTO: PTR BYTE,:PTR BYTE
 ifPasswordRight PROTO :PTR BYTE,:PTR BYTE
 MemSetZero PROTO: PTR BYTE,:DWORD
+readAllFriends PROTO :PTR BYTE,:PTR BYTE
+
 
 ;==================== DATA =======================
 .data
@@ -67,6 +69,8 @@ loginSuccess db "success", 0
 loginFailure db "fail", 0
 
 msgFormat1 db "%s %s %s", 0
+msgFormat2 db "%s %s %s %s", 0
+msgFormat3 db "%d %s", 0
 
 client STRUCT
 	username db 64 DUP(?)
@@ -138,17 +142,24 @@ stringCmp PROC str1:ptr byte, str2:ptr byte
 stringCmp ENDP
 
 
+parseFriendList PROC
+parseFriendList ENDP
+
+
 nameToFd PROC nameStr:ptr byte, targetfd:ptr dword
 	LOCAL @cursor:dword
 	mov eax, clientnum
 	mov @cursor, 0
-	mov ebx, @cursor
-	.while ebx < eax
+	mov edx, @cursor
+	mov ebx, 0
+	.while edx < eax
+		push edx
 		.if clientlist[ebx].status == 1
 			push ebx
-			invoke stringCmp, addr clientlist[ebx].username, nameStr
+			add ebx, offset clientlist
+			invoke crt_strcmp, ebx, nameStr
 			pop ebx
-			.if eax == 1
+			.if eax == 0
 				mov eax, clientlist[ebx].sockfd
 				mov edx, targetfd
 				mov [edx], eax
@@ -156,8 +167,9 @@ nameToFd PROC nameStr:ptr byte, targetfd:ptr dword
 				ret
 			.endif
 		.endif
-		inc @cursor
-		mov ebx, @cursor
+		add ebx, type client
+		pop edx
+		inc edx
 		mov eax, clientnum
 	.endw
 	mov eax, 0
@@ -167,6 +179,57 @@ nameToFd PROC nameStr:ptr byte, targetfd:ptr dword
 	mov eax, 0
 	ret
 nameToFd ENDP
+
+
+broadcastOnOffLine PROC currentname:ptr byte, isOn:dword
+	LOCAL targetname:ptr byte
+	LOCAL targetfd:dword
+	LOCAL @msgField[1024]:byte
+	push eax
+	push ebx
+	push edx
+	mov eax, clientnum
+	mov ebx, 0
+	mov edx, 0
+	.while ebx < eax
+		push eax
+		push ebx
+		push edx
+		.if clientlist[edx].status == 1
+			; 遍历当前在线用户列表，找出下（上）线用户的好友
+			mov eax, clientlist[edx].sockfd
+			mov targetfd, eax
+			add edx, offset clientlist
+			mov targetname, edx
+			invoke ifFriends, targetname, currentname
+			.if eax == 1
+				; 如果该用户是下（上）线用户的好友 向他发送下线信息
+				mov eax, isOn
+				.if eax == 1
+					invoke MemSetZero, addr @msgField, 1024
+					; sprintf(msg, "%d %s", 4, name)
+					invoke crt_sprintf, addr @msgField, addr msgFormat3, 4, addr currentname
+				.else
+					invoke MemSetZero, addr @msgField, 1024
+					; sprintf(msg, "%d %s", 5, name)
+					invoke crt_sprintf, addr @msgField, addr msgFormat3, 5, addr currentname
+				.endif
+				; 发送
+				invoke crt_strlen, addr @msgField
+				invoke send, targetfd, addr @msgField, eax, 0
+			.endif
+		.endif
+		pop edx
+		pop ebx
+		pop eax
+		add edx, type client
+		inc ebx
+	.endw
+	pop edx
+	pop ebx
+	pop eax
+	ret
+broadcastOnOffLine ENDP
 
 
 msgParser PROC buffer:ptr byte, targetfd:ptr dword, content:ptr byte
@@ -182,6 +245,7 @@ msgParser PROC buffer:ptr byte, targetfd:ptr dword, content:ptr byte
 		 .while bl != 0
 			.if bl == 32
 				mov bl, 0
+				dec edx
 				mov [edx], bl
 				mov eax, edx
 				inc eax
@@ -232,6 +296,7 @@ msgParser PROC buffer:ptr byte, targetfd:ptr dword, content:ptr byte
 		mov eax, 3
 		ret
 	.endif
+	ret
 msgParser ENDP
 
 serviceThread PROC params:PTR threadParam
@@ -245,8 +310,9 @@ serviceThread PROC params:PTR threadParam
 	LOCAL @msgField[1024]:byte
 	LOCAL _hSocket:DWORD
 	LOCAL _clientid:DWORD
-	push esi
+	;print "enter thread", 13, 30
 	push eax
+	invoke MemSetZero, addr @currentUsername, 64
 	mov esi, params
 	mov eax, (threadParam PTR [esi]).sockid
 	mov _hSocket, eax
@@ -256,9 +322,9 @@ serviceThread PROC params:PTR threadParam
 	mul ebx
 	add eax, offset clientlist
 	invoke crt_strcpy, addr @currentUsername, eax
-	pop esi
+	;invoke StdOut, addr @currentUsername
+	pop eax
 	inc dwThreadCounter
-	print "enter thread", 13, 30
 	;----------------FOR DEBUG--------------
 	;invoke recv, _hSocket, addr @szBuffer, 512, 0
 	;invoke StdOut,addr @szBuffer
@@ -277,19 +343,33 @@ serviceThread PROC params:PTR threadParam
 			.break
 		.endif
 		.if eax
+			invoke MemSetZero, addr @szBuffer, 512
 			invoke recv, _hSocket, addr @szBuffer, 512, 0
+			push eax
 			invoke StdOut, addr @szBuffer
+			pop eax
 			.break  .if eax == SOCKET_ERROR
 			.break  .if !eax
 			; 解析消息
 			invoke msgParser, addr @szBuffer, addr @targetSockfd, addr @msgContent
+			push eax
+			print " 777 ", 13, 30
+			pop eax
 			.if eax == 1
 				; 文字消息类型
-				invoke send, @targetSockfd, addr @msgContent, eax, 0
+				invoke MemSetZero, addr @msgField, 1024
+				; sprintf(msg, "%s %s %s", "1", sender, content)
+				invoke crt_sprintf, addr @msgField, addr msgFormat1, addr typeCodeOne, addr @currentUsername, addr @msgContent
+				invoke StdOut, addr @msgField
+				invoke crt_strlen, addr @msgField
+				invoke send, @targetSockfd, addr @msgField, eax, 0
 				.break  .if eax == SOCKET_ERROR
 			.elseif eax == 2
 				; 图片消息类型
-				invoke send, @targetSockfd, addr @msgContent, eax, 0
+				invoke MemSetZero, addr @msgField, 1024
+				; sprintf(msg, "%s %s %s", "2", sender, content)
+				invoke crt_sprintf, addr @msgField, addr msgFormat1, addr typeCodeTwo, addr @currentUsername, addr @msgContent
+				invoke send, @targetSockfd, addr @msgField, sizeof @msgField, 0
 				.break  .if eax == SOCKET_ERROR
 			.elseif eax == 3
 				; 加好友
@@ -310,13 +390,15 @@ serviceThread PROC params:PTR threadParam
 							invoke MemSetZero, addr @msgField, 1024
 							; sprintf(msg, "%s %s %s", "3", name, "1")
 							invoke crt_sprintf, addr @msgField, addr msgFormat1, addr typeCodeThree, addr @msgContent, addr typeCodeOne
-							invoke send, _hSocket, addr @msgField, sizeof @msgField, 0
+							invoke crt_strlen, addr @msgField
+							invoke send, _hSocket, addr @msgField, eax, 0
 
 							; 向好友广播
 							invoke MemSetZero, addr @msgField, 1024
 							; sprintf(msg, "%s %s %s", "3", name, "1")
 							invoke crt_sprintf, addr @msgField, addr msgFormat1, addr typeCodeThree, addr @currentUsername, addr typeCodeOne
-							invoke send, @targetSockfd, addr @msgField, sizeof @msgField, 0
+							invoke crt_strlen, addr @msgField
+							invoke send, @targetSockfd, addr @msgField, eax, 0
 
 						.else
 							; 对方不在线，只需对一方广播
@@ -324,7 +406,8 @@ serviceThread PROC params:PTR threadParam
 							invoke MemSetZero, addr @msgField, 1024
 							; sprintf(msg, "%s %s %s", "3", name, "0")
 							invoke crt_sprintf, addr @msgField, addr msgFormat1, addr typeCodeThree, addr @msgContent, addr typeCodeZero
-							invoke send, _hSocket, addr @msgField, sizeof @msgField, 0
+							invoke crt_strlen, addr @msgField
+							invoke send, _hSocket, addr @msgField, eax, 0
 						.endif
 						invoke send, _hSocket, addr loginSuccess, sizeof loginSuccess, 0
 					.else
@@ -340,6 +423,13 @@ serviceThread PROC params:PTR threadParam
 	.endw
 	invoke closesocket,_hSocket
 	dec dwThreadCounter
+	; 从当前用户列表更改该下线用户状态
+	mov eax, _clientid
+	mov ebx, type client
+	mul ebx
+	mov clientlist[eax].status, 0
+	; 向好友广播其下线信息
+	invoke broadcastOnOffLine, addr @currentUsername, 0
 	invoke SetDlgItemInt,hWinMain,IDC_COUNT,dwThreadCounter,FALSE
 	ret
 serviceThread ENDP
@@ -405,6 +495,8 @@ login PROC sockfd:dword
 			mov clientlist[edx].sockfd, eax
 			mov clientlist[edx].status, 1
 			inc clientnum
+			; 向好友广播他的上线
+			invoke broadcastOnOffLine, addr @username, 1
 			mov eax, 1
 			ret
 		.else
@@ -517,9 +609,11 @@ main PROC
 			mov eax, @connSock
 			mov @param_to_thread.sockid, eax
 			invoke CreateThread, NULL, 0, offset serviceThread, addr @param_to_thread, NULL, esp
+			;print "enter thread", 13, 30
+		.else
+			invoke CloseHandle, @connSock
 		.endif
         pop ecx
-        invoke CloseHandle,eax
     .endw
     invoke closesocket,listenSocket
     ;invoke ExitProcess,0
