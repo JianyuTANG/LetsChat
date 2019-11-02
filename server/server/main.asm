@@ -71,6 +71,9 @@ loginFailure db "fail", 0
 msgFormat1 db "%s %s %s", 0
 msgFormat2 db "%s %s %s %s", 0
 msgFormat3 db "%d %s", 0
+msgFormat4 db "%s%s", 0
+msgFormat5 db "%s %d ", 0
+msgFormat6 db "%s%s", 0
 
 client STRUCT
 	username db 64 DUP(?)
@@ -85,6 +88,13 @@ threadParam ENDS
 
 clientlist client 100 DUP(<>)
 clientnum dd 0
+
+
+teststring db "tang wang luo", 0
+teststring2 db 10 DUP(0)
+largespace db 200 DUP(?)
+largespace2 db 200 DUP(?)
+atab db " ", 0
 
 ;=================== CODE =========================
 .code
@@ -142,10 +152,6 @@ stringCmp PROC str1:ptr byte, str2:ptr byte
 stringCmp ENDP
 
 
-parseFriendList PROC
-parseFriendList ENDP
-
-
 nameToFd PROC nameStr:ptr byte, targetfd:ptr dword
 	LOCAL @cursor:dword
 	mov eax, clientnum
@@ -179,6 +185,58 @@ nameToFd PROC nameStr:ptr byte, targetfd:ptr dword
 	mov eax, 0
 	ret
 nameToFd ENDP
+
+
+parseFriendList PROC friendlist:ptr byte, msgField:ptr byte
+	LOCAL @tfd:dword
+	invoke crt_sprintf, friendlist, addr msgFormat6, friendlist, addr atab
+	mov eax, friendlist
+	mov bl, [eax]
+	push eax
+	.while bl != 0
+		.if bl == 32
+			mov bl, 0
+			mov [eax], bl
+			pop edx
+			mov esi, eax
+			inc esi
+			push esi
+			push eax
+			push edx
+			;sprintf(msgField, "%s%s", msgField, content)
+			invoke crt_sprintf, msgField, addr msgFormat4, msgField, edx
+			pop edx
+			;invoke nameToFd, edx, addr @tfd
+			mov eax, 1
+			.if eax == 1
+				;sprintf(msgField, "%s %d ", msgField, 1)
+				invoke crt_sprintf, msgField, addr msgFormat5, msgField, 1
+			.else
+				;sprintf(msgField, "%s %d ", msgField, 0)
+				invoke crt_sprintf, msgField, addr msgFormat5, msgField, 0
+			.endif
+			pop eax
+		.endif
+		inc eax
+		mov bl, [eax]
+	.endw
+	pop edx
+
+	invoke crt_strlen, msgField
+	dec eax
+	.if eax > 2
+		add eax, msgField
+		mov bl, 0
+		mov [eax], bl
+	.else
+		mov eax, msgField
+		mov bl, 0
+		mov [eax], bl
+	.endif
+
+	ret
+parseFriendList ENDP
+
 
 
 broadcastOnOffLine PROC currentname:ptr byte, isOn:dword
@@ -310,7 +368,7 @@ serviceThread PROC params:PTR threadParam
 	LOCAL @msgField[1024]:byte
 	LOCAL _hSocket:DWORD
 	LOCAL _clientid:DWORD
-	;print "enter thread", 13, 30
+	LOCAL @friendlist[1024]:byte
 	push eax
 	invoke MemSetZero, addr @currentUsername, 64
 	mov esi, params
@@ -330,7 +388,15 @@ serviceThread PROC params:PTR threadParam
 	;invoke StdOut,addr @szBuffer
 	;invoke send, _hSocket, addr loginFailure, sizeof loginFailure, 0
 	;-----------------------------------------
-	; TODO 返回好友列表
+
+	; 返回好友列表
+	invoke MemSetZero, addr @friendlist, 1024
+	invoke MemSetZero, addr @msgField, 1024
+	invoke readAllFriends, addr @currentUsername, addr @friendlist
+	invoke parseFriendList, addr @friendlist, addr @msgField
+	invoke crt_strlen, addr @msgField
+	invoke send, _hSocket, addr @msgField, eax, 0
+
 	invoke SetDlgItemInt,hWinMain,IDC_COUNT,dwThreadCounter,FALSE
 	.while  TRUE
 		mov @stFdset.fd_count,1
@@ -353,7 +419,7 @@ serviceThread PROC params:PTR threadParam
 			; 解析消息
 			invoke msgParser, addr @szBuffer, addr @targetSockfd, addr @msgContent
 			push eax
-			print " 777 ", 13, 30
+			;print " 777 ", 13, 30
 			pop eax
 			.if eax == 1
 				; 文字消息类型
@@ -565,6 +631,14 @@ main PROC
     LOCAL @stSin:sockaddr_in
 	LOCAL @connSock:dword
 	LOCAL @param_to_thread:threadParam
+
+	;---------------FOR DEBUG----------------------------------
+	;invoke MemSetZero, addr largespace, 200
+	;invoke MemSetZero, addr largespace2, 200
+	;invoke crt_strcpy, addr largespace2, addr teststring
+	;invoke parseFriendList, addr teststring2, addr largespace
+	;invoke StdOut, addr largespace
+
     invoke WSAStartup,101h,addr @stWsa
     ;创建流套接字
     invoke socket,AF_INET,SOCK_STREAM,0
