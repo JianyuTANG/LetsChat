@@ -15,6 +15,7 @@ include windows.inc
 include user32.inc
 includelib user32.lib
 include masm32rt.inc
+include msvcrt.inc
 ;include irvine32.inc
 
 ExitProcess PROTO STDCALL:DWORD
@@ -44,6 +45,12 @@ serverPort equ 6792
 szClient db "Client: %s",0dh,0ah,0
 szServer db "Server: %s",0dh,0ah,0
 
+typeCodeZero db "0", 0
+typeCodeOne db "1", 0
+typeCodeTwo db "2", 0
+typeCodeThree db "3", 0
+typeCodeFour db "4", 0
+
 dwThreadCounter dd ?
 dwFlag dd ?
 F_STOP dd ?
@@ -59,11 +66,18 @@ connSocket dd 20 DUP(?)
 loginSuccess db "success", 0
 loginFailure db "fail", 0
 
+msgFormat1 db "%s %s %s", 0
+
 client STRUCT
 	username db 64 DUP(?)
 	sockfd dd ?
 	status dd 0
 client ENDS
+
+threadParam STRUCT
+	sockid dd ?
+	clientid dd ?
+threadParam ENDS
 
 clientlist client 100 DUP(<>)
 clientnum dd 0
@@ -220,13 +234,26 @@ msgParser PROC buffer:ptr byte, targetfd:ptr dword, content:ptr byte
 	.endif
 msgParser ENDP
 
-serviceThread PROC _hSocket
+serviceThread PROC params:PTR threadParam
 	LOCAL @stFdset:fd_set,@stTimeval:timeval
 	LOCAL @szBuffer[1024]:byte
 	LOCAL @type:dword
 	LOCAL @currentSock:dword
+	LOCAL @currentUsername[64]:byte
 	LOCAL @targetSockfd:dword
 	LOCAL @msgContent[512]:byte
+	LOCAL @msgField[1024]:byte
+	LOCAL _hSocket:DWORD
+	LOCAL _clientid:DWORD
+	push esi
+	push eax
+	mov esi, params
+	mov eax, (threadParam PTR [esi]).sockid
+	mov _hSocket, eax
+	mov eax, (threadParam PTR [esi]).clientid
+	mov _clientid, eax
+	invoke stringCopy, addr (clientlist[eax].username), addr @currentUsername
+	pop esi
 	inc dwThreadCounter
 	print "enter thread", 13, 30
 	; TODO 返回好友列表
@@ -248,22 +275,49 @@ serviceThread PROC _hSocket
 			.break  .if !eax
 			; 解析消息
 			invoke msgParser, addr @szBuffer, addr @targetSockfd, addr @msgContent
-			.if eax == 1
+			.if eax == 49
 				; 文字消息类型
 				invoke send, @targetSockfd, addr @msgContent, eax, 0
 				.break  .if eax == SOCKET_ERROR
-			.elseif eax == 2
+			.elseif eax == 50
 				; 图片消息类型
 				invoke send, @targetSockfd, addr @msgContent, eax, 0
 				.break  .if eax == SOCKET_ERROR
-			.elseif eax ==3
+			.elseif eax == 51
 				; 加好友
-				;invoke isExisted, addr @msgContent
+				invoke ifLogged, addr @msgContent
 				.if eax == 1
 					; 用户存在
-					;invoke writeNewFriend, addr @msgContent, 
-					.if eax == 1
-						; 加好友成功
+					; 检查二人是否已经是好友
+					invoke ifFriends, addr @msgContent, addr @currentUsername
+					.if eax == 0
+						; 两人不是好友 可以添加
+						invoke writeNewFriend, addr @msgContent, addr @currentUsername
+						; 检查另一方是否在线，如在线，向双方广播
+						invoke nameToFd, addr @msgContent, addr @targetSockfd
+						.if eax == 1
+							; 对方在线，需对双方广播
+
+							; 向当前用户广播
+							invoke MemSetZero, addr @msgField, 1024
+							; sprintf(msg, "%s %s %s", "3", name, "1")
+							invoke crt_sprintf, addr @msgField, addr msgFormat1, addr typeCodeThree, addr @msgContent, addr typeCodeOne
+							invoke send, _hSocket, addr @msgField, sizeof @msgField, 0
+
+							; 向好友广播
+							invoke MemSetZero, addr @msgField, 1024
+							; sprintf(msg, "%s %s %s", "3", name, "1")
+							invoke crt_sprintf, addr @msgField, addr msgFormat1, addr typeCodeThree, addr @currentUsername, addr typeCodeOne
+							invoke send, @targetSockfd, addr @msgField, sizeof @msgField, 0
+
+						.else
+							; 对方不在线，只需对一方广播
+							; 向当前用户广播
+							invoke MemSetZero, addr @msgField, 1024
+							; sprintf(msg, "%s %s %s", "3", name, "0")
+							invoke crt_sprintf, addr @msgField, addr msgFormat1, addr typeCodeThree, addr @msgContent, addr typeCodeZero
+							invoke send, _hSocket, addr @msgField, sizeof @msgField, 0
+						.endif
 						invoke send, _hSocket, addr loginSuccess, sizeof loginSuccess, 0
 					.else
 						; 已有该好友，添加失败
@@ -324,9 +378,22 @@ login PROC sockfd:dword
 		.if eax == 1
 			; 密码正确 登录成功
 			invoke send, sockfd, addr loginSuccess, sizeof loginSuccess, 0
-			;invoke strCopy, client[clientnum].username, addr username
+
+			; 写入当前在线用户列表
+			mov eax, clientnum
+			mov ebx, type client
+			mul ebx
+			add eax, offset clientlist
+			push eax
+			mov ebx, offset client.username
+			add eax, ebx
+			push eax
+			mov edx, eax
+			invoke MemSetZero, edx, 64
+			pop edx
+			invoke crt_strcpy, edx, addr @username
 			mov eax, sockfd
-			mov edx, clientnum
+			pop edx
 			mov clientlist[edx].sockfd, eax
 			mov clientlist[edx].status, 1
 			inc clientnum
@@ -397,6 +464,7 @@ main PROC
     LOCAL @szBuffer[256]:byte
     LOCAL @stSin:sockaddr_in
 	LOCAL @connSock:dword
+	LOCAL @param_to_thread:threadParam
     invoke WSAStartup,101h,addr @stWsa
     ;创建流套接字
     invoke socket,AF_INET,SOCK_STREAM,0
@@ -437,7 +505,9 @@ main PROC
 		; 判断请求是注册还是登录
 		invoke login, @connSock
 		.if eax == 1
-			invoke CreateThread, NULL, 0, offset serviceThread, eax, NULL, esp
+			mov @param_to_thread.sockid, eax
+			mov @param_to_thread.clientid, edx
+			invoke CreateThread, NULL, 0, offset serviceThread, addr @param_to_thread, NULL, esp
 		.endif
         pop ecx
         invoke CloseHandle,eax
