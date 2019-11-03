@@ -230,6 +230,9 @@ parseFriendList PROC friendlist:ptr byte, msgField:ptr byte
 		mov [eax], bl
 	.else
 		mov eax, msgField
+		mov bl, 32
+		mov [eax], bl
+		inc eax
 		mov bl, 0
 		mov [eax], bl
 	.endif
@@ -266,11 +269,12 @@ broadcastOnOffLine PROC currentname:ptr byte, isOn:dword
 				.if eax == 1
 					invoke MemSetZero, addr @msgField, 1024
 					; sprintf(msg, "%d %s", 4, name)
-					invoke crt_sprintf, addr @msgField, addr msgFormat3, 4, addr currentname
+					invoke crt_sprintf, addr @msgField, addr msgFormat3, 4, currentname
 				.else
 					invoke MemSetZero, addr @msgField, 1024
 					; sprintf(msg, "%d %s", 5, name)
-					invoke crt_sprintf, addr @msgField, addr msgFormat3, 5, addr currentname
+					invoke crt_sprintf, addr @msgField, addr msgFormat3, 5, currentname
+					;invoke StdOut, addr @msgField
 				.endif
 				; 发送
 				invoke crt_strlen, addr @msgField
@@ -293,7 +297,7 @@ broadcastOnOffLine ENDP
 msgParser PROC buffer:ptr byte, targetfd:ptr dword, content:ptr byte
 	mov eax, buffer
 	mov bl, [eax]
-	.if bl == 48
+	.if bl == 49
 		 ; 文字消息类型
 		 mov edx, eax
 		 add edx, 2
@@ -320,7 +324,7 @@ msgParser PROC buffer:ptr byte, targetfd:ptr dword, content:ptr byte
 		 invoke crt_strcpy, content, edx
 		 mov eax, 1
 		 ret
-	.elseif bl == 49
+	.elseif bl == 51
 		; 图片消息类型
 		mov edx, eax
 		 add edx, 2
@@ -476,7 +480,7 @@ serviceThread PROC params:PTR threadParam
 							invoke crt_strlen, addr @msgField
 							invoke send, _hSocket, addr @msgField, eax, 0
 						.endif
-						invoke send, _hSocket, addr loginSuccess, sizeof loginSuccess, 0
+						;invoke send, _hSocket, addr loginSuccess, sizeof loginSuccess, 0
 					.else
 						; 已有该好友，添加失败
 						invoke send, _hSocket, addr loginFailure, sizeof loginFailure, 0
