@@ -99,6 +99,8 @@ largespace db 200 DUP(?)
 largespace2 db 200 DUP(?)
 atab db " ", 0
 
+addFriendFail db "6 fail", 0
+
 ;=================== CODE =========================
 .code
 
@@ -331,7 +333,7 @@ msgParser PROC buffer:ptr byte, targetfd:ptr dword, content:ptr byte
 		 invoke crt_strcpy, content, edx
 		 mov eax, 1
 		 ret
-	.elseif bl == 51
+	.elseif bl == 52
 		; 图片消息类型
 		mov edx, eax
 		 add edx, 2
@@ -367,6 +369,13 @@ msgParser PROC buffer:ptr byte, targetfd:ptr dword, content:ptr byte
 		add edx, 2
 		invoke crt_strcpy, content, edx
 		mov eax, 3
+		ret
+	.elseif bl == 51
+		; 删好友
+		mov edx, eax
+		add edx, 2
+		invoke crt_strcpy, content, edx
+		mov eax, 4
 		ret
 	.endif
 	mov eax, 5
@@ -500,11 +509,23 @@ serviceThread PROC params:PTR threadParam
 						;invoke send, _hSocket, addr loginSuccess, sizeof loginSuccess, 0
 					.else
 						; 已有该好友，添加失败
-						invoke send, _hSocket, addr loginFailure, sizeof loginFailure, 0
+						invoke send, _hSocket, addr addFriendFail, sizeof addFriendFail, 0
 					.endif
 				.else
 					; 用户不存在，加好友失败
-					invoke send, _hSocket, addr loginFailure, sizeof loginFailure, 0
+					invoke send, _hSocket, addr addFriendFail, sizeof addFriendFail, 0
+				.endif
+			.elseif eax == 4
+				; 双删好友
+				invoke ifLogged, @msgContent
+				.if eax == 1
+					; 用户存在
+					; 检查二人是否已经是好友
+					invoke ifFriends, @msgContent, addr @currentUsername
+					.if eax == 1
+						; 两人是好友 可以双删
+
+					.endif
 				.endif
 			.endif
 		.endif
