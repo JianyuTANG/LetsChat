@@ -206,8 +206,8 @@ parseFriendList PROC friendlist:ptr byte, msgField:ptr byte
 			;sprintf(msgField, "%s%s", msgField, content)
 			invoke crt_sprintf, msgField, addr msgFormat4, msgField, edx
 			pop edx
-			;invoke nameToFd, edx, addr @tfd
-			mov eax, 1
+			invoke nameToFd, edx, addr @tfd
+			;mov eax, 1
 			.if eax == 1
 				;sprintf(msgField, "%s %d ", msgField, 1)
 				invoke crt_sprintf, msgField, addr msgFormat5, msgField, 1
@@ -380,7 +380,7 @@ serviceThread PROC params:PTR threadParam
 	mul ebx
 	add eax, offset clientlist
 	invoke crt_strcpy, addr @currentUsername, eax
-	;invoke StdOut, addr @currentUsername
+	invoke StdOut, addr @currentUsername
 	pop eax
 	inc dwThreadCounter
 	;----------------FOR DEBUG--------------
@@ -391,8 +391,9 @@ serviceThread PROC params:PTR threadParam
 
 	; 返回好友列表
 	invoke MemSetZero, addr @friendlist, 1024
-	invoke MemSetZero, addr @msgField, 1024
 	invoke readAllFriends, addr @currentUsername, addr @friendlist
+	invoke StdOut, addr @friendlist
+	invoke MemSetZero, addr @msgField, 1024
 	invoke parseFriendList, addr @friendlist, addr @msgField
 	invoke crt_strlen, addr @msgField
 	invoke send, _hSocket, addr @msgField, eax, 0
@@ -555,7 +556,10 @@ login PROC sockfd:dword
 			mov edx, eax
 			invoke MemSetZero, edx, 64
 			pop edx
+			push edx
 			invoke crt_strcpy, edx, addr @username
+			pop edx
+			invoke StdOut, edx
 			mov eax, sockfd
 			pop edx
 			mov clientlist[edx].sockfd, eax
@@ -679,6 +683,8 @@ main PROC
 		; 判断请求是注册还是登录
 		invoke login, @connSock
 		.if eax == 1
+			mov edx, clientnum
+			dec edx
 			mov @param_to_thread.clientid, edx
 			mov eax, @connSock
 			mov @param_to_thread.sockid, eax

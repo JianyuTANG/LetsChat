@@ -1,19 +1,15 @@
 
 include masm32rt.inc
-include msvcrt.inc
-includelib msvcrt.lib
+;include msvcrt.inc
+;includelib msvcrt.lib
 
-ExitProcess PROTO STDCALL:DWORD
+
 
 .data
 relativePathHead byte "./userInfo/",0
 fileTail byte ".txt",0
 txtName byte 256 dup (0)
 my_tab byte " ",0
-
-test_username byte "wyq0706",0
-test_password byte "123456",0
-test_buffer byte 100 dup(?)
 
 
 .code
@@ -148,11 +144,13 @@ writeNewFriend PROC USES eax, user1:PTR BYTE,user2:PTR BYTE
 ;-------------------------------------------------------------
     LOCAL @hFile :DWORD                          ; file handle          
     LOCAL @cloc  :DWORD                          ; current location variable
+    LOCAL bwrt  :DWORD                          ; variable for bytes written
 
     invoke getUserFileName, user1
     mov @hFile, fopen(addr txtName)        
     mov @cloc, fseek(@hFile,0,FILE_END)         
     fprint @hFile,user2 
+    ;mov bwrt, fwrite(hFile,t,len(txt))
     
     fclose @hFile                
 
@@ -252,6 +250,7 @@ ifFriends PROC  user1:PTR BYTE,user2:PTR BYTE
     LOCAL @flen  :DWORD                          ; file length variable
     LOCAL @hMem  :DWORD                          ; allocated memory handle
     LOCAL @cloc  :DWORD
+    LOCAL br   :DWORD
     LOCAL @word:DWORD
     invoke getUserFileName, user1
     mov @hFile, fopen(addr txtName)        
@@ -335,7 +334,7 @@ ifPasswordRight PROC  username:PTR BYTE,password:PTR BYTE
 
     ; 把文本内容读入内存中
     mov @bwrt, fread(@hFile,@hMem,@flen)
-    ; 对文本内容第一行惊醒读取
+    ; 对文本内容第一行进行读取
 	invoke readline,@hMem,@word,0
     invoke Str_compare_my,@word,password
 	cmp eax,0
@@ -387,54 +386,6 @@ Str_merge PROC USES eax edx,firstPart:PTR BYTE,secondPart:PTR BYTE
 Str_merge ENDP
 
 
-;----------------------------------------------------------------------------
-myreadline PROC USES edx ebx, _source:PTR BYTE,_word:PTR BYTE,_pos:DWORD
-;一行行读取文本，\r\n结尾
-;eax存放上次读完，下一次起始地址
-;----------------------------------------------------------------------------
-	LOCAL @pos:DWORD
-
-	mov edx,_source
-	mov eax,_pos
-	add edx,eax
-	;当前起始位置
-	mov @pos,edx
-	mov bl,[edx]
-
-	.while TRUE
-			.if bl==10 || bl==13
-				; 如果为空格
-				mov bl,0
-				mov [edx],bl
-
-				pushad
-				invoke crt_strcpy,_word,@pos
-				pushad
-				;invoke StdOut,_word
-				popad
-				popad
-            .break
-            .elseif bl==0
-                mov eax,0
-                ret
-
-			.endif
-
-			inc edx
-			mov bl,[edx]
-	.endw
-
-    mov eax,_source
-	sub edx,eax
-	mov eax,edx
-	inc eax
-    inc eax
-
-    ret
-
-myreadline ENDP
-
-
 ;--------------------------------------------------------------
 readAllFriends PROC _username:PTR BYTE,_buffer:PTR BYTE
 ;传入需要读取用户列表的用户名，传入存入用户列表信息的字符串指针
@@ -447,49 +398,49 @@ readAllFriends PROC _username:PTR BYTE,_buffer:PTR BYTE
     LOCAL @flen  :DWORD                          ; file length variable
     LOCAL @hMem  :DWORD                          ; allocated memory handle
     LOCAL @cloc  :DWORD
-    LOCAL @word[30]:DWORD
+    LOCAL br   :DWORD
+    LOCAL @word:DWORD
+	;invoke StdOut, _username
+	invoke MemSetZero, addr txtName, 256
     invoke getUserFileName, _username
+	;invoke StdOut, addr txtName
     mov @hFile, fopen(addr txtName)        
   ; -------------------------------------------------
   ; open the file , read its content
   ; -------------------------------------------------
-    mov @flen,fsize(@hFile)                     ; get its length
-
-.if @flen==0
-pushad
-print "file is null. maybe cannot find file",13,10
-popad
-.endif
-
+    mov @flen,fsize(@hFile)                      ; get its length
     mov @hMem, alloc(1024)                       ; allocate a buffer of that size
-    ;mov @word,alloc(20)
+    mov @word,alloc(20)
     mov @cloc,0
 
+	invoke MemSetZero, @word, 20
+	invoke MemSetZero, @hMem, 1024
     ; 把文本内容读入内存中
-    mov @bwrt, fread(@hFile,@hMem,@flen)
+    mov eax, fread(@hFile,@hMem,@flen)
+	mov @bwrt, eax
     ; 对文本内容进行一行行读取
-    invoke RtlZeroMemory,addr @word,sizeof @word
-	invoke myreadline,@hMem,addr @word,0
+	invoke readline,@hMem,@word,0
     ; Stdout结果也会修改eax的值
+	;invoke StdOut,@word
+	;inc eax
+	;inc eax
 	mov @cloc,eax
 
-    invoke RtlZeroMemory,addr @word,sizeof @word
-	invoke myreadline,@hMem,addr @word,@cloc
+	invoke readline,@hMem,@word,@cloc
 	; 判断是否结束： readline结束标志是eax为0
 	cmp eax,0
 	je outno
 	mov @cloc,eax
-    invoke Str_merge,_buffer,addr @word
+    invoke Str_merge,_buffer,@word
 
 myloop:
-    invoke RtlZeroMemory,addr @word,sizeof @word
-	invoke myreadline,@hMem,addr @word,@cloc
+	invoke readline,@hMem,@word,@cloc
 	; 判断是否结束： readline结束标志是eax为0
 	cmp eax,0
 	je outno
 	mov @cloc,eax
     invoke Str_merge,_buffer,addr my_tab
-    invoke Str_merge,_buffer,addr @word   
+    invoke Str_merge,_buffer,@word   
 	jmp myloop
 
 
@@ -505,10 +456,5 @@ outno:
 
 readAllFriends ENDP
 
-
-mytest PROC 
-invoke readAllFriends,addr test_username,addr test_buffer
-invoke ExitProcess,0
-mytest ENDP
 
 end
